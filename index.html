@@ -840,6 +840,7 @@ async function scanQuote(doc,progress){
   const nJpn=Core.QUOTE_TEXT.filter(t=>t.mode==='jpn'&&!t.manual).length;
   const tot=4+6+(nOcr-nJpn)+nJpn*JW;
   let done=0, cnt=0, restOther=nOcr-nJpn;
+  const ocrErrs=[];
   const msg=()=>cnt===0?'文字読み取りの準備中…':((restOther>0?'金額・文字を読み取り中… (':'お名前・車名など日本語を読み取り中… (')+cnt+'/'+nOcr+')');
   const pct=()=>Math.min(100,Math.round(done/tot*100));
   const tick=()=>new Promise(r=>setTimeout(r,0)); // 画面の表示を更新させる
@@ -868,7 +869,7 @@ async function scanQuote(doc,progress){
     const reg=row.key==='total'?T:(row.y<0.51?A:B), dy=row.key==='total'?dyA:(row.y<0.51?dyA:dyB);
     const h=row.h||0.0062;
     const c=cropRegion(reg,row.x0||0.27,row.y+dy-h,row.x1||0.445,row.y+dy+h,{scale:0.85,despeckle:true});
-    rowJobs.push({row,c,p:track(ocrCanvas(c,'digits').catch((e)=>{if(/OCR/.test(e.message))throw e;return '';}))});
+    rowJobs.push({row,c,p:track(ocrCanvas(c,'digits').catch((e)=>{if(/OCR/.test(e.message))throw e;ocrErrs.push(String(e&&e.message||e));return '';}))});
     await tick();
   }
   const noJpn={v:false};
@@ -880,7 +881,7 @@ async function scanQuote(doc,progress){
     const c=cropRegion(Hd,b[0],b[1]+dy,b[2],b[3]+dy,mode==='jpn'?{scale:0.5}:{scale:tf.scale||0.42,removeLines:!tf.noLines,invert:!!tf.invert});
     let p;
     if(tf.manual) p=Promise.resolve('');
-    else if(mode==='jpn'){ p=jpnChain.then(()=>noJpn.v?'':ocrCanvas(c,'jpn').catch(()=>{noJpn.v=true;return '';})); jpnChain=p; }
+    else if(mode==='jpn'){ p=jpnChain.then(()=>noJpn.v?'':ocrCanvas(c,'jpn').catch((e)=>{noJpn.v=true;ocrErrs.push('日本語: '+String(e&&e.message||e));return '';})); jpnChain=p; }
     else p=ocrCanvas(c,mode);
     textJobs.push({tf,c,p:track(p,mode==='jpn'&&!tf.manual)});
     await tick();
@@ -911,7 +912,10 @@ async function scanQuote(doc,progress){
   fields.sort((a,b)=>order.indexOf(a.group)-order.indexOf(b.group));
   const checks=Core.quoteChecks(vals);
   if(!(vals.total>0)||Object.values(vals).filter(x=>x>0).length<5) checks.unshift({label:'金額を読み取れていません(画像の読み込み・OCRに失敗した可能性)',ok:false,detail:'お支払総額 '+(vals.total||0)+'円'});
-  return {fields,results,checks,lines:[],noJpn:noJpn.v};
+  const raw=[];
+  rowJobs.forEach(({row},i)=>raw.push('金額 '+row.label+' → '+JSON.stringify(String(rowT[i]||'').trim())));
+  textJobs.forEach(({tf},i)=>raw.push('文字 '+tf.label+' → '+JSON.stringify(String(textT[i]||'').trim())));
+  return {fields,results,checks,lines:[],noJpn:noJpn.v,errs:ocrErrs,raw};
 }
 
 const fmtNum=(s)=>{const t=Core.parseNum(s);if(t===null||t.includes('.'))return s;return t.replace(/\B(?=(\d{3})+(?!\d))/g,',');};
@@ -941,7 +945,7 @@ $('pdfFile').addEventListener('change',async(e)=>{
       lsSet(LS_OCR,'1');
       renderForm(out,out.fields);
       const miss=state.rows.filter(r=>!r.found).length, ng=out.checks.filter(c=>!c.ok).length;
-      setStatus('見積書を読み取りました。'+(ng?'検算が合わない箇所が'+ng+'件あります。元の見積書と見比べてください。':'検算はすべて一致しました。')+(out.noJpn?'日本語OCRの部品を読み込めなかったため、名前などは画像を見て入力してください。':'お客様名・担当者・車名など文字の欄は、必ず画像と見比べて確認してください。'));
+      setStatus((out.errs.length?'【OCRでエラーが出ました:'+out.errs[0]+'】':'')+'見積書を読み取りました。'+(ng?'検算が合わない箇所が'+ng+'件あります。元の見積書と見比べてください。':'検算はすべて一致しました。')+(out.noJpn?'日本語OCRの部品を読み込めなかったため、名前などは画像を見て入力してください。':'お客様名・担当者・車名など文字の欄は、必ず画像と見比べて確認してください。'));
       return;
     }
     const out=Core.extractFields(pages,state.fields);
@@ -981,7 +985,7 @@ function renderForm(out,fields){
     form.appendChild(row);
     state.rows.push({f,inp,found:r.found});
   });
-  $('dump').textContent=(out.lines||[]).map(l=>'p'+(l.page+1)+' y'+l.top+'  '+l.text).join('\n');
+  $('dump').textContent=out.raw?((out.errs&&out.errs.length?'【OCRのエラー】\n'+[...new Set(out.errs)].join('\n')+'\n\n':'')+'【OCRが返した文字】\n'+out.raw.join('\n')):(out.lines||[]).map(l=>'p'+(l.page+1)+' y'+l.top+'  '+l.text).join('\n');
   $('result').hidden=false;
   { $('payDown').dataset.touched=''; const d15=cellVal('D15'); if(d15>0){ $('payDown').value=fmtNum(String(Math.max(0,d15-(cellVal('I16')-cellVal('E28'))))); } }
   recalcPay();
