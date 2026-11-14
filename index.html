@@ -1089,7 +1089,11 @@ function renderForm(out,fields){
   });
   $('dump').textContent=out.raw?((out.errs&&out.errs.length?'【OCRのエラー】\n'+[...new Set(out.errs)].join('\n')+'\n\n':'')+'【OCRが返した文字】\n'+out.raw.join('\n')):(out.lines||[]).map(l=>'p'+(l.page+1)+' y'+l.top+'  '+l.text).join('\n');
   $('result').hidden=false;
-  { $('payFees').checked=false;$('payDown').dataset.touched=''; const d15=cellVal('D15'); if(d15>0){ $('payDown').value=fmtNum(String(Math.max(0,d15-(cellVal('I16')-cellVal('E28'))))); } }
+  { // 請求書の「下取車」欄(H16)にも、PDFから読んだ下取車価格を表示する(ここで直した金額がお支払い計算に使われる)
+    const h16=state.rows.find(x=>x.f.cell==='H16');
+    if(h16&&h16.inp.value.trim()===''&&cellVal('I16')>0){h16.inp.value=fmtNum(String(cellVal('I16')));h16.td&&h16.td.classList.remove('warn');}
+  }
+  { $('payFees').checked=false;$('payDown').dataset.touched=''; const d15=cellVal('D15'); if(d15>0){ $('payDown').value=fmtNum(String(Math.max(0,d15-(tradeVal()-cellVal('E28'))))); } }
   recalcPay();
   placeSheet();
 }
@@ -1110,6 +1114,12 @@ let lastPlan=null;
 const yen=(n)=>Math.round(n).toLocaleString('ja-JP')+'円';
 const numOf=(id)=>{const t=Core.parseNum($(id).value.trim());return t===null?0:Number(t);};
 function cellVal(cell){const r=(state.rows||[]).find(x=>x.f.cell===cell);if(!r)return 0;const t=Core.parseNum(r.inp.value.trim());return t===null?0:Number(t);}
+/* 下取車価格: 請求書の「下取車」欄(H16)に入れた金額を使う。手で触っていなければ、PDFから読んだ値(I16)を使う */
+function tradeVal(){
+  const r=(state.rows||[]).find(x=>x.f.cell==='H16');
+  if(r&&(r.inp.dataset.manual==='1'||r.inp.value.trim()!=='')) return cellVal('H16');
+  return cellVal('I16');
+}
 function customerName(){const r=(state.rows||[]).find(x=>x.f.cell==='C7');return r?r.inp.value.trim():'';}
 /* 諸費用合計(請求書の「別途諸費用計」)。頭金に含めるときの金額 */
 function feesTotal(){
@@ -1133,7 +1143,7 @@ function recalcPay(){
   $('btnMake').disabled=false;
   payVisibility();
   const total=cellVal('D13')-cellVal('H15');
-  const trade=cellVal('I16'), zan=cellVal('E28');
+  const trade=tradeVal(), zan=cellVal('E28');
   $('payFeesAmt').textContent=$('payFees').checked?'(入力した頭金 '+yen(numOf('payDown'))+' + 諸費用 '+yen(feesTotal())+' = 現金でのお支払い '+yen(downEff())+')':'';
   const planArgs={total,trade:trade-zan,down:downEff(),round100:$('payRound').checked,mode:$('payMode').value,rate:numOf('payRate'),
     n:numOf('payN'),monthly:numOf('payMonthly'),bonus:numOf('payBonus'),bonusMonths:[numOf('payB1'),numOf('payB2')],start:numOf('payStart')};
@@ -1222,7 +1232,7 @@ $('btnPrint').addEventListener('click',()=>window.print());
 /* 請求書の金額欄をそろえる(頭金を指定 → 賦払金・お支払済額・今回ご請求額を逆算) */
 function applyValues(){
   if(!state.rows) return null;
-  const T=cellVal('D13'), Hc=cellVal('H15'), Tr=cellVal('I16'), zan=cellVal('E28');
+  const T=cellVal('D13'), Hc=cellVal('H15'), Tr=tradeVal(), zan=cellVal('E28');
   const m=$('payMode').value;
   const plan=Core.calcPlan({total:T-Hc,trade:Tr-zan,down:downEff(),mode:m,rate:0,n:1,monthly:1,bonus:0,bonusMonths:[],start:1});
   const down=m==='cash'?Math.max(0,T-Hc-(Tr-zan)):plan.down;
