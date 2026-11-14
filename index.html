@@ -976,9 +976,8 @@ async function scanQuote(doc,progress){
     else { val=t.replace(/[^A-Z0-9-]/g,'').replace(/^-+|-+$/g,''); }
     textVals[tf.key]=val;
     if(tf.composeFrom){ const k=(textVals[tf.composeFrom]||'').split('-')[0]; if(k&&val) val=k+'-'+val; }
-    if(tf.prefix&&val) val=tf.prefix+val;
     found=val!=='';
-    put({group:tf.group,name:tf.label,cell:tf.cell,kind:'text',numeric:!!tf.numeric,enabled:true},val,found,thumbOf(c));
+    put({group:tf.group,name:tf.label,cell:tf.cell,kind:'text',numeric:!!tf.numeric,prefix:tf.prefix||'',enabled:true},val,found,thumbOf(c));
   });
   // 画面の並びを揃える(お客様情報→車両→金額)
   const order=['お客様情報','お買い上げ車両','請求金額','販売価格','下取','税金・保険料','各種費用等(消費税込)','法定費用預り'];
