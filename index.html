@@ -76,7 +76,7 @@ td.c input{width:62px}
 #sheet input.cst{background:transparent;border-bottom:1px dotted #9bb8d8}
 #sheet .edt{outline:0;border-radius:2px;cursor:text}
 #sheet .edt:hover{background:#eef6ff}#sheet .edt:focus{background:#fff;box-shadow:0 0 0 2px #2d7ff9}
-#sheet .pre{flex:none;pointer-events:none;margin-right:3px}
+#sheet .pre{flex:none;pointer-events:none;white-space:pre;user-select:none}
 #sheet .fw{position:absolute;top:0;height:100%;display:flex;align-items:center}
 #sheet input.sin.inw{position:static;flex:1;min-width:0;width:auto;height:100%}
 #sheet td.fld{z-index:1}#sheet td.fld:focus-within{z-index:3}
@@ -157,7 +157,7 @@ body.print-inv #sheet .ovl{color:#000}
     <div id="payOut"></div>
     <div class="noprint" style="margin-top:6px">
       <label><input id="payApply" type="checkbox" checked> 上の計算で決まった金額を請求書の金額欄(お支払済額・今回ご請求額・うち現金・賦払金)にも反映する</label><br>
-      <label><input id="payWrite" type="checkbox"> 計算結果を様式の「賦払金内容」欄にも書き込む(セル位置は設定で確認)</label><br>
+      <label><input id="payWrite" type="checkbox" checked> 計算結果(回数・月々・ボーナス・頭金など)を請求書の「賦払金内容」欄に自動で入れる</label><br>
       <label><input id="payBuy" type="checkbox"> 請求書の「購入形態」欄に「割賦(金融機関名)」と入れる</label><br>
       <button id="btnPrint">お客様向けに印刷/PDF保存</button>
     </div>
@@ -288,8 +288,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     F('賦払金内容', '割賦元金', 'I40', 'num', '割賦元金', 'R'),
   ];
 
-  /* 賦払金内容(ローン等)の欄はセル位置が推定なので、確認するまで「使わない」にしておく */
-  DEFAULT_FIELDS.forEach((f) => { f.enabled = f.group !== '賦払金内容'; });
+  /* 賦払金内容(ローン等)の欄は、お支払い計算の結果が自動で入る(直接書き換えもできる) */
+  DEFAULT_FIELDS.forEach((f) => { f.enabled = true; });
 
   /* ---------- 文字処理 ---------- */
   const nfkc = (s) => String(s || '').normalize('NFKC');
@@ -573,7 +573,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const t = parseNum(s);
       return t === null ? s : Number(t);
     }
-    if (f.prefix) return f.prefix + s;
+    if (f.prefix) { const bare = f.prefix.replace(/[\s　]+/g, ''); return f.prefix + (s.startsWith(bare) ? s.slice(bare.length).replace(/^[\s　]+/, '') : s); }
     if (f.numeric && /^\d{1,15}$/.test(nfkc(s))) return Number(nfkc(s));
     return s;
   }
@@ -724,6 +724,11 @@ function loadTemplate(){
   else{ // 以前に保存した設定にも、同じ意味の言い方を足す
     const alias={'自動車税種別割':'自動車税種別割|自動車税','車両本体価格':'車両本体価格|車両価格|店頭価格'};
     state.fields.forEach(f=>{if(alias[f.label]) f.label=alias[f.label];});
+    if(!lsGet('inv_fu_v1')){ // 賦払金内容の欄を、一度だけ「使う」に切り替える
+      let ch=false;state.fields.forEach(f=>{if(f.group==='賦払金内容'&&f.enabled===false){f.enabled=true;ch=true;}});
+      if(ch) lsSet(LS_F,JSON.stringify(state.fields));
+      lsSet('inv_fu_v1','1');
+    }
   }
   const t=lsGet(LS_T);
   if(t){ try{const o=JSON.parse(t); state.tplBytes=b64ToBytes(o.b64); state.tplName=o.name||'登録した様式';}catch(e){state.tplBytes=null;} }
@@ -971,9 +976,8 @@ async function scanQuote(doc,progress){
     else { val=t.replace(/[^A-Z0-9-]/g,'').replace(/^-+|-+$/g,''); }
     textVals[tf.key]=val;
     if(tf.composeFrom){ const k=(textVals[tf.composeFrom]||'').split('-')[0]; if(k&&val) val=k+'-'+val; }
-    if(tf.prefix&&val) val=tf.prefix+val;
     found=val!=='';
-    put({group:tf.group,name:tf.label,cell:tf.cell,kind:'text',numeric:!!tf.numeric,enabled:true},val,found,thumbOf(c));
+    put({group:tf.group,name:tf.label,cell:tf.cell,kind:'text',numeric:!!tf.numeric,prefix:tf.prefix||'',enabled:true},val,found,thumbOf(c));
   });
   // 画面の並びを揃える(お客様情報→車両→金額)
   const order=['お客様情報','お買い上げ車両','請求金額','販売価格','下取','税金・保険料','各種費用等(消費税込)','法定費用預り'];
@@ -1041,7 +1045,8 @@ function renderForm(out,fields){
   let lastG=null;
   fields.forEach((f)=>{
     if(f.enabled===false) return;
-    const r=out.results[f.cell+'|'+f.name]||{value:'',found:false};
+    const r=Object.assign({},out.results[f.cell+'|'+f.name]||{value:'',found:false});
+    if(f.group==='賦払金内容') r.found=true;
     if(f.group!==lastG){const h=document.createElement('h3');h.textContent=f.group||'その他';form.appendChild(h);lastG=f.group;}
     const row=document.createElement('div');row.className='row'+(r.found?'':' warn');
     const lab=document.createElement('label');lab.textContent=f.name;
@@ -1050,7 +1055,7 @@ function renderForm(out,fields){
     const inp=document.createElement('input');inp.type='text';
     if(f.kind==='num') inp.inputMode='decimal';
     inp.value=f.kind==='num'?fmtNum(r.value):r.value;
-    inp.addEventListener('input',()=>row.classList.remove('warn'));
+    inp.addEventListener('input',(ev)=>{row.classList.remove('warn');if(ev.isTrusted)inp.dataset.manual='1';});
     if(f.kind==='num') inp.addEventListener('blur',()=>{inp.value=fmtNum(inp.value.trim());});
     if(r.img){const wrap=document.createElement('div');const im=document.createElement('img');im.className='thumb';im.src=r.img;wrap.append(im,inp);row.append(lab,wrap);}
     else row.append(lab,inp);
@@ -1101,6 +1106,7 @@ function recalcPay(){
     n:numOf('payN'),monthly:numOf('payMonthly'),bonus:numOf('payBonus'),bonusMonths:[numOf('payB1'),numOf('payB2')],start:numOf('payStart')};
   const plan=Core.calcPlan(planArgs);
   lastPlan=plan.loan?plan:null;
+  planFill();
   const out=$('payOut');out.textContent='';
   $('printHead').textContent='お支払いのご案内'+(customerName()?'　'+customerName()+' 様':'');
   if(plan.error){const d=document.createElement('div');d.className='perr';d.textContent=plan.error;out.appendChild(d);return;}
@@ -1150,7 +1156,7 @@ $('payDown').addEventListener('input',()=>{$('payDown').dataset.touched='1';});
 });
 $('form').addEventListener('input',recalcPay);
 $('payApply').addEventListener('change',recalcPay);
-$('payWrite').addEventListener('change',recalcPay);$('payBuy').addEventListener('change',recalcPay);
+$('payWrite').addEventListener('change',()=>{(state.rows||[]).forEach(e=>{delete e.inp.dataset.manual;});recalcPay();});$('payBuy').addEventListener('change',recalcPay);
 /* 金融機関(設定で「名前,年利,回数」を登録。年利・回数は省略可) */
 const LS_FIN='inv_fin_v1', DEFAULT_FIN='オリコ\nトヨタファイナンス';
 const finText=()=>{const t=lsGet(LS_FIN);return t===null?DEFAULT_FIN:t;};
@@ -1214,17 +1220,36 @@ function applyEntries(){
   return Object.entries(a.cells).map(([cell,value])=>({cell,value}));
 }
 
+/* お支払い計算の結果を、請求書の「賦払金内容」欄(右中央)に入れる。自分で書き換えた欄はそのまま残す */
+const FILL_NAMES=['お支払回数','お支払開始日','初回お支払額','2回目以降お支払額','ボーナス月①(月)','ボーナス月①(金額)','ボーナス月②(月)','ボーナス月②(金額)','最終回お支払額','頭金','割賦元金','割賦手数料'];
+function startText(){
+  const m=Math.min(12,Math.max(1,Math.round(numOf('payStart')||1))),now=new Date();
+  const y=now.getFullYear()+(m<now.getMonth()+1?1:0);
+  return fmtDate(Math.floor((Date.UTC(y,m-1,1)-Date.UTC(1899,11,30))/86400000),'ggge"年"m"月"');
+}
+function planFill(){
+  if(!state.rows) return;
+  const P=$('payWrite').checked&&lastPlan?lastPlan:null, v={};
+  if(P){
+    v['お支払回数']=P.count;v['お支払開始日']=startText();v['初回お支払額']=P.first;v['2回目以降お支払額']=P.monthly;
+    v['最終回お支払額']=P.final;v['頭金']=P.down;v['割賦元金']=P.principal;v['割賦手数料']=P.interest;
+    if(P.bonus){v['ボーナス月①(月)']=P.bonusMonths[0];v['ボーナス月①(金額)']=P.bonus;if(P.bonusMonths[1]){v['ボーナス月②(月)']=P.bonusMonths[1];v['ボーナス月②(金額)']=P.bonus;}}
+  }
+  for(const e of state.rows){
+    if(!FILL_NAMES.includes(e.f.name)||e.inp.dataset.manual==='1') continue;
+    if(!P&&e.inp.dataset.auto!=='1') continue; // 計算で入れた値だけを消す(PDFから読んだ値は残す)
+    const x=v[e.f.name];
+    e.inp.value=x===undefined||x===''||x===null?'':(e.f.kind==='num'?fmtNum(String(x)):String(x));
+    e.inp.dataset.auto=P?'1':'';
+    const td=e.td;if(td)td.classList.remove('warn');
+  }
+}
 function planEntries(){
   if(!lastPlan) return [];
   const P=lastPlan, by={};
   state.fields.forEach(f=>{by[f.name]=f.cell;});
   const e=[];const put=(name,v)=>{if(by[name]!==undefined)e.push({cell:by[name],value:v});};
   if($('payBuy').checked&&finName()) put('購入形態','割賦('+finName()+')');
-  if(!$('payWrite').checked) return e;
-  put('お支払回数',P.count);put('頭金',P.down);put('割賦元金',P.principal);put('割賦手数料',P.interest);
-  put('初回お支払額',P.first);put('2回目以降お支払額',P.monthly);put('最終回お支払額',P.final);
-  if(P.bonus){put('ボーナス月①(月)',P.bonusMonths[0]);put('ボーナス月①(金額)',P.bonus);
-    if(P.bonusMonths[1]){put('ボーナス月②(月)',P.bonusMonths[1]);put('ボーナス月②(金額)',P.bonus);}}
   return e;
 }
 
@@ -1316,7 +1341,7 @@ const colNumS=(s)=>{let n=0;for(const ch of s)n=n*26+ch.charCodeAt(0)-64;return 
 const colLetterS=(n)=>{let s='';while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=((n-1)/26)|0;}return s;};
 const splitRef=(r)=>{const m=/^([A-Z]+)(\d+)$/.exec(r);return m?{c:colNumS(m[1]),r:+m[2]}:null;};
 const APPLY_CELLS=['D14','D15','D16','H17','I15','I16','I17'];
-const PLAN_NAMES=['購入形態','お支払回数','頭金','割賦元金','割賦手数料','初回お支払額','2回目以降お支払額','最終回お支払額','ボーナス月①(月)','ボーナス月①(金額)','ボーナス月②(月)','ボーナス月②(金額)'];
+const PLAN_NAMES=['購入形態'];
 
 async function loadSheetModel(bytes){
   if(SH.cache.has(bytes)) return SH.cache.get(bytes);
@@ -1545,7 +1570,7 @@ async function placeSheet(){
         const total=own+exR-2;
         if(f.prefix){ // 先頭に自動で付く文字(「担当」など)を入力欄の左に並べる
           const w=document.createElement('div');w.className='fw';w.style.left=padL+'px';w.style.width=(total-padL)+'px';
-          const p=document.createElement('span');p.className='pre';p.textContent=f.prefix.replace(/[　\s]+$/,'');p.title='先頭に自動で付きます';
+          const p=document.createElement('span');p.className='pre';p.textContent=f.prefix;p.title='固定の文字です(Excelにもこのまま入ります)';
           inp.classList.add('inw');w.append(p,inp);td.appendChild(w);
         }else{
           td.appendChild(inp);inp.style.width=(total-padL)+'px';if(padL)inp.style.left=padL+'px';
