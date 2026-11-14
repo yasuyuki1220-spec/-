@@ -268,6 +268,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     F('法定費用預り', '車庫証明法定費用', 'E45', 'num', '車庫証明法定費用', 'L'),
     F('法定費用預り', '下取車代行法定費用', 'E46', 'num', '下取車代行法定費用', 'L'),
     F('法定費用預り', 'リサイクル法関連費用', 'E47', 'num', 'リサイクル法関連費用', 'L'),
+    F('法定費用預り', '任意法定費用(その他)', 'E48', 'num', '任意法定費用', 'L'),
     F('法定費用預り', '下取自税', 'E49', 'num', '下取自税', 'L'),
     F('法定費用預り', 'Lメンテナンスリース', 'E50', 'num', 'Lメンテナンスリース', 'L'),
     F('法定費用預り', 'その他費用', 'E51', 'num', 'その他費用', 'L'),
@@ -651,7 +652,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     QR('k_sum', 0.7499, '課税販売諸費用等 小計④'),
     QR('a1', 0.7652, '検査登録法定費用', 'E44', '法定費用預り'), QR('a2', 0.7796, '車庫証明法定費用', 'E45', '法定費用預り'),
     QR('a3', 0.7935, '下取車法定費用', 'E46', '法定費用預り'), QR('a4', 0.8080, 'リサイクル法関連費用', 'E47', '法定費用預り', { x0: 0.315 }),
-    QR('a5', 0.8212, '任意法定費用'), QR('a_sum', 0.8380, '預り法定費用等 小計'),
+    QR('a5', 0.8212, '任意法定費用', 'E48', '法定費用預り'), QR('a_sum', 0.8380, '預り法定費用等 小計'),
     QR('s1', 0.8631, '自動車保険料', 'E53', '法定費用預り'), QR('s2', 0.8776, '下取自税', 'E49', '法定費用預り'),
     QR('s3', 0.8920, 'CPO LS(請求書の「Lメンテナンスリース」欄へ)', 'E50', '法定費用預り'), QR('s4', 0.9053, 'その他費用', 'E51', '法定費用預り'),
     QR('s_sum', 0.9225, 'その他 小計'),
@@ -724,6 +725,11 @@ function loadTemplate(){
   else{ // 以前に保存した設定にも、同じ意味の言い方を足す
     const alias={'自動車税種別割':'自動車税種別割|自動車税','車両本体価格':'車両本体価格|車両価格|店頭価格'};
     state.fields.forEach(f=>{if(alias[f.label]) f.label=alias[f.label];});
+    if(!state.fields.some(f=>f.cell==='E48')){ // 「その他」の行(E48)にも入力欄を足す(法定諸費用計に含めるため)
+      const i=state.fields.findIndex(f=>f.cell==='E47');
+      state.fields.splice(i<0?state.fields.length:i+1,0,{group:'法定費用預り',name:'任意法定費用(その他)',cell:'E48',kind:'num',label:'任意法定費用',side:'L',occ:0,n:0,enabled:true});
+      lsSet(LS_F,JSON.stringify(state.fields));
+    }
     if(!lsGet('inv_fu_v1')){ // 賦払金内容の欄を、一度だけ「使う」に切り替える
       let ch=false;state.fields.forEach(f=>{if(f.group==='賦払金内容'&&f.enabled===false){f.enabled=true;ch=true;}});
       if(ch) lsSet(LS_F,JSON.stringify(state.fields));
