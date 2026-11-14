@@ -65,7 +65,37 @@ td.c input{width:62px}
 #checks .ok{color:#2a7a2a}#checks .ng{color:#b00020;font-weight:700}
 .perr{color:#b00020;font-weight:700}
 #printHead{display:none}
-@media print{body{background:#fff}main>*:not(#payBox){display:none!important}#payBox{display:block!important;border:none}#payBox .noprint{display:none!important}#printHead{display:block;font-size:18px;font-weight:700;margin-bottom:6px}.sum td{border-bottom:1px solid #999}}
+#sheetWrap{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:6px;padding:6px;margin:8px 0}
+#sheet{min-width:0;border-collapse:collapse;table-layout:fixed;background:#fff;color:#000;font-family:"MS PGothic","Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif;line-height:1.25}
+#sheet td{padding:0 2px;overflow:visible;position:relative;height:inherit}
+#sheet td.nw{white-space:pre}#sheet td.wr{white-space:pre-wrap;overflow:hidden}
+#sheet td.vt{padding:2px 0;letter-spacing:.1em}
+#sheet input.sin{font:inherit;color:inherit;background:#f1f7ff;border:0;border-bottom:1px solid #9bb8d8;border-radius:0;padding:0 2px;margin:0;width:100%;height:100%;min-height:1.3em;position:absolute;left:0;top:0;box-sizing:border-box;outline:0}
+#sheet td.warn input.sin{background:var(--warn);border-bottom-color:var(--warnb)}
+#sheet input.sin:focus{background:#fff;box-shadow:inset 0 0 0 2px #2d7ff9}
+#sheet input.cst{background:transparent;border-bottom:1px dotted #9bb8d8}
+#sheet .edt{outline:0;border-radius:2px;cursor:text}
+#sheet .edt:hover{background:#eef6ff}#sheet .edt:focus{background:#fff;box-shadow:0 0 0 2px #2d7ff9}
+#sheet .pre{position:relative;z-index:1;pointer-events:none;margin-right:2px}
+#sheet td.fld:has(.pre){padding-left:0}
+#sheet .ovl{display:none;color:#1f4e79}
+#sheet td.ov>.ovl{display:block;background:#f3f7fc}
+#sheet td.ov>input.sin,#sheet td.ov>.calc,#sheet td.ov>.edt{display:none}
+#srcPanel{position:sticky;bottom:0;background:#fffbe8;border:1px solid var(--warnb);border-radius:8px;padding:6px 10px;margin:6px 0;font-size:13px;z-index:2}
+#srcPanel .sname{font-weight:700;margin-bottom:3px}
+@page{size:A4;margin:10mm}
+@media print{
+body{background:#fff}
+main>*:not(#result){display:none!important}
+#result{border:none!important;padding:0!important;margin:0!important;display:block!important}
+body:not(.print-inv) #result>*:not(#payBox){display:none!important}
+body:not(.print-inv) #payBox{margin:0!important}
+body.print-inv #result>*:not(#sheetWrap){display:none!important}
+body.print-inv #sheetWrap{border:none;padding:0;margin:0;overflow:visible;display:block!important}
+body.print-inv #sheet input.sin{background:transparent!important;border:0!important;box-shadow:none!important}
+body.print-inv #sheet td.warn input.sin,body.print-inv #sheet td.ov>.ovl{background:transparent!important}
+body.print-inv #sheet .ovl{color:#000}
+#payBox .noprint{display:none!important}#printHead{display:block;font-size:18px;font-weight:700;margin-bottom:6px}.sum td{border-bottom:1px solid #999}}
 </style>
 </head>
 <body>
@@ -94,9 +124,13 @@ td.c input{width:62px}
 </section>
 
 <section id="result" hidden>
-  <h2>③ 読み取り結果(直してからExcelにできます)</h2>
-  <div class="hint">黄色の欄は PDF から読み取れなかった項目です。必要なら入力してください(空欄のままだとExcelのその欄は空になります)。</div>
+  <h2>③ 読み取り結果(請求書の形のまま直せます)</h2>
+  <div class="hint">金額も文字も、請求書の上で直接タップして直せます(「請求書」「お支払条件」などの見出しの文字も書き換え可)。黄色の欄は PDF から読み取れなかった項目です(空欄のままだとExcelのその欄は空になります)。合計は自動で計算します。</div>
   <div id="checks"></div>
+  <div id="sheetWrap" hidden></div>
+  <div id="srcPanel" class="noprint" hidden></div>
+  <div class="noprint" style="margin:6px 0 2px"><button id="btnPrintInv">請求書を印刷/PDF保存(A4・この様式のまま)</button></div>
+  <h3 id="formRestHead" hidden>様式の中に置けなかった項目</h3>
   <div id="form"></div>
   <div id="payBox" style="margin-top:14px">
     <h2 class="noprint">④ お支払い計算(手出し・頭金・割賦)</h2>
@@ -840,6 +874,7 @@ async function scanQuote(doc,progress){
   const nJpn=Core.QUOTE_TEXT.filter(t=>t.mode==='jpn'&&!t.manual).length;
   const tot=4+6+(nOcr-nJpn)+nJpn*JW;
   let done=0, cnt=0, restOther=nOcr-nJpn;
+  const ocrErrs=[];
   const msg=()=>cnt===0?'文字読み取りの準備中…':((restOther>0?'金額・文字を読み取り中… (':'お名前・車名など日本語を読み取り中… (')+cnt+'/'+nOcr+')');
   const pct=()=>Math.min(100,Math.round(done/tot*100));
   const tick=()=>new Promise(r=>setTimeout(r,0)); // 画面の表示を更新させる
@@ -868,7 +903,7 @@ async function scanQuote(doc,progress){
     const reg=row.key==='total'?T:(row.y<0.51?A:B), dy=row.key==='total'?dyA:(row.y<0.51?dyA:dyB);
     const h=row.h||0.0062;
     const c=cropRegion(reg,row.x0||0.27,row.y+dy-h,row.x1||0.445,row.y+dy+h,{scale:0.85,despeckle:true});
-    rowJobs.push({row,c,p:track(ocrCanvas(c,'digits').catch((e)=>{if(/OCR/.test(e.message))throw e;return '';}))});
+    rowJobs.push({row,c,p:track(ocrCanvas(c,'digits').catch((e)=>{if(/OCR/.test(e.message))throw e;ocrErrs.push(String(e&&e.message||e));return '';}))});
     await tick();
   }
   const noJpn={v:false};
@@ -880,7 +915,7 @@ async function scanQuote(doc,progress){
     const c=cropRegion(Hd,b[0],b[1]+dy,b[2],b[3]+dy,mode==='jpn'?{scale:0.5}:{scale:tf.scale||0.42,removeLines:!tf.noLines,invert:!!tf.invert});
     let p;
     if(tf.manual) p=Promise.resolve('');
-    else if(mode==='jpn'){ p=jpnChain.then(()=>noJpn.v?'':ocrCanvas(c,'jpn').catch(()=>{noJpn.v=true;return '';})); jpnChain=p; }
+    else if(mode==='jpn'){ p=jpnChain.then(()=>noJpn.v?'':ocrCanvas(c,'jpn').catch((e)=>{noJpn.v=true;ocrErrs.push('日本語: '+String(e&&e.message||e));return '';})); jpnChain=p; }
     else p=ocrCanvas(c,mode);
     textJobs.push({tf,c,p:track(p,mode==='jpn'&&!tf.manual)});
     await tick();
@@ -911,7 +946,10 @@ async function scanQuote(doc,progress){
   fields.sort((a,b)=>order.indexOf(a.group)-order.indexOf(b.group));
   const checks=Core.quoteChecks(vals);
   if(!(vals.total>0)||Object.values(vals).filter(x=>x>0).length<5) checks.unshift({label:'金額を読み取れていません(画像の読み込み・OCRに失敗した可能性)',ok:false,detail:'お支払総額 '+(vals.total||0)+'円'});
-  return {fields,results,checks,lines:[],noJpn:noJpn.v};
+  const raw=[];
+  rowJobs.forEach(({row},i)=>raw.push('金額 '+row.label+' → '+JSON.stringify(String(rowT[i]||'').trim())));
+  textJobs.forEach(({tf},i)=>raw.push('文字 '+tf.label+' → '+JSON.stringify(String(textT[i]||'').trim())));
+  return {fields,results,checks,lines:[],noJpn:noJpn.v,errs:ocrErrs,raw};
 }
 
 const fmtNum=(s)=>{const t=Core.parseNum(s);if(t===null||t.includes('.'))return s;return t.replace(/\B(?=(\d{3})+(?!\d))/g,',');};
@@ -937,11 +975,15 @@ $('pdfFile').addEventListener('change',async(e)=>{
     if(total<5){
       setStatus('文字データのない画像のPDFです。見積書として、画像から文字を読み取ります(OCR)…');
       const out=await scanQuote(doc,(m,p)=>{setStatus(m);if(p!==undefined)setProgress(p);});
+      { // 請求書の形で入力できるよう、見積書に無い項目(住所・登録NOなど)も空欄で用意する
+        const have=new Set(out.fields.map(f=>f.cell));
+        for(const f of state.fields){ if(f.enabled===false||have.has(f.cell)) continue; have.add(f.cell); out.fields.push(f); out.results[f.cell+'|'+f.name]={value:'',found:true}; }
+      }
       setProgress(100);progTimer=setTimeout(()=>setProgress(null),1200);
       lsSet(LS_OCR,'1');
       renderForm(out,out.fields);
       const miss=state.rows.filter(r=>!r.found).length, ng=out.checks.filter(c=>!c.ok).length;
-      setStatus('見積書を読み取りました。'+(ng?'検算が合わない箇所が'+ng+'件あります。元の見積書と見比べてください。':'検算はすべて一致しました。')+(out.noJpn?'日本語OCRの部品を読み込めなかったため、名前などは画像を見て入力してください。':'お客様名・担当者・車名など文字の欄は、必ず画像と見比べて確認してください。'));
+      setStatus((out.errs.length?'【OCRでエラーが出ました:'+out.errs[0]+'】':'')+'見積書を読み取りました。'+(ng?'検算が合わない箇所が'+ng+'件あります。元の見積書と見比べてください。':'検算はすべて一致しました。')+(out.noJpn?'日本語OCRの部品を読み込めなかったため、名前などは画像を見て入力してください。':'お客様名・担当者・車名など文字の欄は、必ず画像と見比べて確認してください。'));
       return;
     }
     const out=Core.extractFields(pages,state.fields);
@@ -979,16 +1021,18 @@ function renderForm(out,fields){
     if(r.img){const wrap=document.createElement('div');const im=document.createElement('img');im.className='thumb';im.src=r.img;wrap.append(im,inp);row.append(lab,wrap);}
     else row.append(lab,inp);
     form.appendChild(row);
-    state.rows.push({f,inp,found:r.found});
+    state.rows.push({f,inp,found:r.found,img:r.img||null,row});
   });
-  $('dump').textContent=(out.lines||[]).map(l=>'p'+(l.page+1)+' y'+l.top+'  '+l.text).join('\n');
+  $('dump').textContent=out.raw?((out.errs&&out.errs.length?'【OCRのエラー】\n'+[...new Set(out.errs)].join('\n')+'\n\n':'')+'【OCRが返した文字】\n'+out.raw.join('\n')):(out.lines||[]).map(l=>'p'+(l.page+1)+' y'+l.top+'  '+l.text).join('\n');
   $('result').hidden=false;
   { $('payDown').dataset.touched=''; const d15=cellVal('D15'); if(d15>0){ $('payDown').value=fmtNum(String(Math.max(0,d15-(cellVal('I16')-cellVal('E28'))))); } }
   recalcPay();
+  placeSheet();
 }
 
 function clearResult(keepFile){
   state.rows=null;
+  SH.tbl=null;SH.entries=new Map();$('sheetWrap').textContent='';$('sheetWrap').hidden=true;$('srcPanel').hidden=true;$('formRestHead').hidden=true;
   $('form').textContent='';$('checks').textContent='';$('dump').textContent='';$('result').hidden=true;
   if(!keepFile) $('pdfFile').value='';
   setStatus('');
@@ -1014,6 +1058,7 @@ function payVisibility(){
 function addRow(tb,label,val,cls){const tr=document.createElement('tr');if(cls)tr.className=cls;const a=document.createElement('td');a.textContent=label;const b=document.createElement('td');b.textContent=val;tr.append(a,b);tb.appendChild(tr);}
 function recalcPay(){
   if(!state.rows){return;}
+  refreshSheet();
   $('btnMake').disabled=false;
   payVisibility();
   const total=cellVal('D13')-cellVal('H15');
@@ -1111,7 +1156,7 @@ function planEntries(){
 $('btnMake').addEventListener('click',async()=>{
   if(!state.rows) return;
   try{
-    const entries=state.rows.map(r=>({cell:r.f.cell,value:Core.toCellValue(r.f,r.inp.value)})).concat(planEntries(),applyEntries());
+    const entries=sheetEntries().concat(state.rows.map(r=>({cell:r.f.cell,value:Core.toCellValue(r.f,r.inp.value)})),planEntries(),applyEntries());
     const bytes=await Core.buildXlsx(window.JSZip,state.tplBytes,entries);
     const blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='請求書_反映済み.xlsx';
@@ -1186,6 +1231,369 @@ $('fSave').addEventListener('click',()=>{
   loadTemplate();$('dlg').close();clearResult(false);
 });
 $('fDefault').addEventListener('click',()=>{if(!confirm('項目設定を初期設定に戻します。よろしいですか?'))return;draft=JSON.parse(JSON.stringify(Core.DEFAULT_FIELDS));renderSettings();});
+
+/* ---------- 請求書の画面(様式の配置をそのまま画面に再現して、そこへ直接入力) ----------
+   様式のExcel(登録した様式)を読んで、列の幅・行の高さ・罫線・結合セル・文字の位置を再現する。
+   読み取り項目のセルには入力欄、様式に最初から書いてある文字は直接書き換えられる。合計などの数式は自動で計算する。 */
+const SH={cache:new WeakMap(),M:null,tbl:null,tds:new Map(),ovl:new Set(),texts:{},nums:{},entries:new Map(),active:null,printZoom:null};
+const colNumS=(s)=>{let n=0;for(const ch of s)n=n*26+ch.charCodeAt(0)-64;return n;};
+const colLetterS=(n)=>{let s='';while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=((n-1)/26)|0;}return s;};
+const splitRef=(r)=>{const m=/^([A-Z]+)(\d+)$/.exec(r);return m?{c:colNumS(m[1]),r:+m[2]}:null;};
+const APPLY_CELLS=['D14','D15','D16','H17','I15','I16','I17'];
+const PLAN_NAMES=['お支払回数','頭金','割賦元金','割賦手数料','初回お支払額','2回目以降お支払額','最終回お支払額','ボーナス月①(月)','ボーナス月①(金額)','ボーナス月②(月)','ボーナス月②(金額)'];
+
+async function loadSheetModel(bytes){
+  if(SH.cache.has(bytes)) return SH.cache.get(bytes);
+  const zip=await window.JSZip.loadAsync(bytes);
+  const rd=async(p)=>{const f=zip.file(p);return f?await f.async('string'):null;};
+  const parse=(x)=>new DOMParser().parseFromString(x,'application/xml');
+  const wb=await rd('xl/workbook.xml');
+  const rid=/<sheet\b[^>]*?r:id="([^"]+)"/.exec(wb)[1];
+  const rels=await rd('xl/_rels/workbook.xml.rels');
+  const relTag=[...rels.matchAll(/<Relationship\b[^>]*>/g)].map(x=>x[0]).find(t=>t.includes('Id="'+rid+'"'));
+  const target=/Target="([^"]+)"/.exec(relTag)[1].replace(/^\//,'').replace(/^(?!xl\/)/,'xl/');
+  const sheet=parse(await rd(target));
+  const strings=[];
+  const sst=await rd('xl/sharedStrings.xml');
+  if(sst) for(const si of parse(sst).getElementsByTagName('si')){
+    let t='';
+    for(const ch of si.children){ // ふりがな(rPh)は除く
+      if(ch.tagName==='t') t+=ch.textContent;
+      else if(ch.tagName==='r') for(const x of ch.children) if(x.tagName==='t') t+=x.textContent;
+    }
+    strings.push(t);
+  }
+  const stx=await rd('xl/styles.xml');
+  const st=stx?parse(stx):null;
+  const numFmts={},fonts=[],fills=[],borders=[],xfs=[];
+  if(st){
+    for(const n of st.getElementsByTagName('numFmt')) numFmts[n.getAttribute('numFmtId')]=n.getAttribute('formatCode');
+    const kids=(tag)=>{const el=st.getElementsByTagName(tag)[0];return el?[...el.children]:[];};
+    const rgb=(e)=>e&&e.getAttribute('rgb')?'#'+e.getAttribute('rgb').slice(-6):null;
+    kids('fonts').forEach(f=>{const g=(t)=>f.getElementsByTagName(t)[0];const sz=g('sz');fonts.push({sz:sz?+sz.getAttribute('val'):11,b:!!g('b'),i:!!g('i'),color:rgb(g('color'))});});
+    kids('fills').forEach(f=>{const p=f.getElementsByTagName('patternFill')[0];fills.push(p&&p.getAttribute('patternType')==='solid'?rgb(p.getElementsByTagName('fgColor')[0]):null);});
+    kids('borders').forEach(b=>{const o={};for(const s of ['left','right','top','bottom']){const e=b.getElementsByTagName(s)[0];o[s]=(e&&e.getAttribute('style'))||null;}borders.push(o);});
+    const cx=st.getElementsByTagName('cellXfs')[0];
+    if(cx) for(const xf of cx.children){const al=xf.getElementsByTagName('alignment')[0];
+      xfs.push({numFmt:xf.getAttribute('numFmtId')||'0',font:+(xf.getAttribute('fontId')||0),fill:+(xf.getAttribute('fillId')||0),border:+(xf.getAttribute('borderId')||0),
+        h:al&&al.getAttribute('horizontal')||'',v:al&&al.getAttribute('vertical')||'',wrap:!!(al&&al.getAttribute('wrapText')==='1'),rot:al&&al.getAttribute('textRotation')||'',indent:al&&+al.getAttribute('indent')||0});}
+  }
+  const fp=sheet.getElementsByTagName('sheetFormatPr')[0];
+  const defH=fp&&fp.getAttribute('defaultRowHeight')?+fp.getAttribute('defaultRowHeight'):13.5;
+  const defW=fp&&fp.getAttribute('defaultColWidth')?+fp.getAttribute('defaultColWidth'):8.43;
+  const colW={};
+  for(const c of sheet.getElementsByTagName('col')){const w=+c.getAttribute('width');for(let i=+c.getAttribute('min');i<=Math.min(+c.getAttribute('max'),60);i++)colW[i]=w;}
+  const cells=new Map(),rowH={};
+  for(const r of sheet.getElementsByTagName('row')){
+    const rn=+r.getAttribute('r'); if(r.getAttribute('ht')) rowH[rn]=+r.getAttribute('ht');
+    for(const c of r.children){ if(c.tagName!=='c') continue;
+      const ref=c.getAttribute('r'),p=splitRef(ref); if(!p) continue;
+      const t=c.getAttribute('t'),vE=c.getElementsByTagName('v')[0],fE=c.getElementsByTagName('f')[0];
+      const o={ref,c:p.c,r:p.r,s:+(c.getAttribute('s')||0),text:null,num:null,f:fE?(fE.textContent||''):null};
+      const v=vE?vE.textContent:null;
+      if(t==='s'&&v!==null) o.text=strings[+v]||'';
+      else if(t==='inlineStr'){o.text=[...c.getElementsByTagName('t')].map(x=>x.textContent).join('');}
+      else if(t==='str'||t==='e') o.text=v||'';
+      else if(t==='b') o.num=v==='1'?1:0;
+      else if(v!==null&&v!==''&&!isNaN(+v)) o.num=+v;
+      cells.set(ref,o);
+    }
+  }
+  const merges=[];
+  for(const m of sheet.getElementsByTagName('mergeCell')){const [a,b]=m.getAttribute('ref').split(':');const pa=splitRef(a),pb=splitRef(b||a);if(pa&&pb)merges.push({c1:pa.c,r1:pa.r,c2:pb.c,r2:pb.r});}
+  const hasBorder=(o)=>{const x=xfs[o.s];if(!x)return false;const b=borders[x.border];return !!(b&&(b.left||b.right||b.top||b.bottom));};
+  let maxC=1,maxR=1;
+  for(const o of cells.values()){
+    if(o.text||o.num!==null||o.f||hasBorder(o)){maxC=Math.max(maxC,o.c);maxR=Math.max(maxR,o.r);}
+  }
+  for(const m of merges){maxC=Math.max(maxC,m.c2);}
+  const M={cells,merges,xfs,fonts,fills,borders,numFmts,colW,rowH,defH,defW,maxC,maxR};
+  SH.cache.set(bytes,M);
+  return M;
+}
+
+/* ---- 数式(SUM・四則・TODAY・セル参照)の計算 ---- */
+function evalFormula(src,getNum){
+  const toks=src.replace(/\$/g,'').match(/\d+\.?\d*|[A-Za-z]{1,3}\d+:[A-Za-z]{1,3}\d+|[A-Za-z]{1,3}\d+(?![A-Za-z(])|[A-Za-z][A-Za-z0-9.]*(?=\()|[-+*\/(),]/g)||[];
+  let i=0;
+  const peek=()=>toks[i],next=()=>toks[i++];
+  const flat=(x)=>Array.isArray(x)?x.reduce((a,b)=>a+b,0):x;
+  const call=(fn,args)=>{
+    const nums=args.flatMap(a=>Array.isArray(a)?a:[a]);
+    switch(fn.toUpperCase()){
+      case 'SUM':return nums.reduce((a,b)=>a+b,0);
+      case 'MAX':return Math.max(...nums);
+      case 'MIN':return Math.min(...nums);
+      case 'ROUND':return Math.round(nums[0]*Math.pow(10,nums[1]||0))/Math.pow(10,nums[1]||0);
+      case 'ROUNDDOWN':return Math.trunc(nums[0]*Math.pow(10,nums[1]||0))/Math.pow(10,nums[1]||0);
+      case 'ROUNDUP':{const k=Math.pow(10,nums[1]||0);return Math.sign(nums[0])*Math.ceil(Math.abs(nums[0])*k)/k;}
+      case 'TODAY':return NaN;
+      default:throw new Error('unsupported');
+    }
+  };
+  function expr(){let v=flat(term());while(peek()==='+'||peek()==='-'){const o=next();const r=flat(term());v=o==='+'?v+r:v-r;}return v;}
+  function term(){let v=factor();while(peek()==='*'||peek()==='/'){const o=next();const r=flat(factor());v=o==='*'?flat(v)*r:flat(v)/r;}return v;}
+  function factor(){
+    const t=next();
+    if(t===undefined) throw new Error('eof');
+    if(t==='-') return -flat(factor());
+    if(t==='+') return flat(factor());
+    if(t==='('){const v=expr();if(next()!==')')throw new Error('paren');return v;}
+    if(/^\d/.test(t)) return +t;
+    if(/^[A-Za-z]{1,3}\d+:[A-Za-z]{1,3}\d+$/.test(t)){
+      const [a,b]=t.toUpperCase().split(':').map(splitRef);const out=[];
+      for(let r=Math.min(a.r,b.r);r<=Math.max(a.r,b.r);r++)for(let c=Math.min(a.c,b.c);c<=Math.max(a.c,b.c);c++)out.push(getNum(colLetterS(c)+r));
+      return out;
+    }
+    if(/^[A-Za-z]{1,3}\d+$/.test(t)) return getNum(t.toUpperCase());
+    if(next()!=='(') throw new Error('func');
+    const args=[];
+    if(peek()===')') next(); else{for(;;){args.push(expr());const d=next();if(d===')')break;if(d!==',')throw new Error('args');}}
+    return call(t,args);
+  }
+  const v=flat(expr());
+  if(i<toks.length) throw new Error('trailing');
+  return v;
+}
+
+/* ---- 表示の形式(桁区切り・%・和暦の日付) ---- */
+const BUILTIN_FMT={0:'General',1:'0',2:'0.00',3:'#,##0',4:'#,##0.00',9:'0%',10:'0.00%',37:'#,##0',38:'#,##0',39:'#,##0.00',40:'#,##0.00',41:'#,##0',42:'#,##0',43:'#,##0.00',44:'#,##0.00'};
+const fmtCode=(M,id)=>M.numFmts[id]||BUILTIN_FMT[id]||'General';
+const isDateFmt=(code)=>{const c=code.split(';')[0].replace(/"[^"]*"|\\.|\[[^\]]*\]/g,'');return /[ymd]/i.test(c)&&!/[#0]/.test(c);};
+function todaySerial(){const d=new Date();return Math.floor((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())-Date.UTC(1899,11,30))/86400000);}
+function fmtDate(serial,code){
+  const d=new Date(Date.UTC(1899,11,30)+serial*86400000);
+  const y=d.getUTCFullYear(),m=d.getUTCMonth()+1,dd=d.getUTCDate();
+  const c=code.split(';')[0].replace(/\[[^\]]*\]/g,'');
+  const reiwa=(y>2019||(y===2019&&(m>4)));
+  const era=reiwa?'令和':(y>=1989?'平成':'昭和'), ey=reiwa?y-2018:(y>=1989?y-1988:y-1925);
+  let out='',i=0;
+  while(i<c.length){
+    if(c[i]==='"'){const j=c.indexOf('"',i+1);out+=c.slice(i+1,j<0?c.length:j);i=j<0?c.length:j+1;continue;}
+    const rest=c.slice(i);let mm;
+    if((mm=/^g+e/i.exec(rest))){out+=era+(ey===1?'元':ey);i+=mm[0].length;}
+    else if((mm=/^e+/i.exec(rest))){out+=ey;i+=mm[0].length;}
+    else if((mm=/^y{3,}/i.exec(rest))){out+=y;i+=mm[0].length;}
+    else if((mm=/^y+/i.exec(rest))){out+=String(y).slice(-2);i+=mm[0].length;}
+    else if((mm=/^m+/i.exec(rest))){out+=mm[0].length>=2?String(m).padStart(2,'0'):m;i+=mm[0].length;}
+    else if((mm=/^d+/i.exec(rest))){out+=mm[0].length>=2?String(dd).padStart(2,'0'):dd;i+=mm[0].length;}
+    else if(c[i]==='@'){i++;}
+    else {out+=c[i];i++;}
+  }
+  return out;
+}
+function fmtValue(M,xf,v){
+  if(typeof v!=='number'||isNaN(v)) return '';
+  const code=fmtCode(M,xf?xf.numFmt:'0');
+  if(isDateFmt(code)) return fmtDate(v,code);
+  const sec=code.split(';')[0];
+  const pct=/%/.test(sec), dec=((/\.(0+)/.exec(sec)||['',''])[1]).length, comma=/#,##0|0,0/.test(sec);
+  const lit=sec.replace(/_./g,'').replace(/\*./g,'');
+  const pre=((/^[^#0.,%]*/.exec(lit)||[''])[0]).replace(/["\\]/g,'').replace(/\[[^\]]*\]/g,'');
+  const suf=((/[^#0.,%]*$/.exec(lit.replace(/%$/,''))||[''])[0]).replace(/["\\]/g,'');
+  if(sec==='General') return String(Math.round(v*1e9)/1e9);
+  let x=pct?v*100:v;
+  const s=comma?x.toLocaleString('ja-JP',{minimumFractionDigits:dec,maximumFractionDigits:dec}):x.toFixed(dec);
+  return pre+s+(pct?'%':'')+suf;
+}
+
+/* ---- 画面の組み立て ---- */
+const bcss=(s)=>!s?'none':({hair:'1px dotted #666',dotted:'1px dotted #000',dashed:'1px dashed #000',mediumDashed:'2px dashed #000',medium:'2px solid #000',thick:'3px solid #000',double:'3px double #000'}[s]||'1px solid #000');
+const px=(w)=>Math.floor(w*7+5);
+function overlayRefs(){
+  const s=new Set(APPLY_CELLS);
+  (state.fields||[]).forEach(f=>{if(PLAN_NAMES.includes(f.name)) s.add(f.cell);});
+  return s;
+}
+function anchorMap(M){
+  const a=new Map();
+  for(const m of M.merges) for(let r=m.r1;r<=m.r2;r++) for(let c=m.c1;c<=m.c2;c++) a.set(colLetterS(c)+r,{ref:colLetterS(m.c1)+m.r1,anchor:r===m.r1&&c===m.c1,m});
+  return a;
+}
+async function placeSheet(){
+  const wrap=$('sheetWrap'); if(!wrap||!state.rows) return;
+  let M;
+  try{ M=await loadSheetModel(state.tplBytes); }catch(e){ wrap.hidden=true; return; }
+  if(!state.rows) return;
+  SH.M=M; SH.texts={}; SH.nums={}; SH.tds=new Map(); SH.entries=new Map();
+  SH.ovl=overlayRefs();
+  const am=anchorMap(M);
+  const byAnchor=new Map();
+  for(const e of state.rows){const k=(am.get(e.f.cell)||{ref:e.f.cell}).ref;if(!byAnchor.has(k))byAnchor.set(k,e);}
+  const tbl=document.createElement('table');tbl.id='sheet';SH.tbl=tbl;
+  const cg=document.createElement('colgroup');let tw=0;
+  for(let c=1;c<=M.maxC;c++){const w=px(M.colW[c]||M.defW);tw+=w;const col=document.createElement('col');col.style.width=w+'px';cg.appendChild(col);}
+  tbl.style.width=tw+'px';tbl.appendChild(cg);SH.width=tw;
+  let th=0;
+  const tb=document.createElement('tbody');
+  const cellAt=(c,r)=>M.cells.get(colLetterS(c)+r);
+  const bOf=(o)=>{const x=o&&M.xfs[o.s];return (x&&M.borders[x.border])||{};};
+  for(let r=1;r<=M.maxR;r++){
+    const tr=document.createElement('tr');const h=Math.round((M.rowH[r]||M.defH)*96/72);tr.style.height=h+'px';th+=h;
+    for(let c=1;c<=M.maxC;c++){
+      const ref=colLetterS(c)+r,a=am.get(ref);
+      if(a&&!a.anchor) continue;
+      const cell=M.cells.get(ref),xf=(cell&&M.xfs[cell.s])||M.xfs[0]||{},font=M.fonts[xf.font]||{sz:11};
+      const td=document.createElement('td');td.dataset.ref=ref;SH.tds.set(ref,td);
+      let b;
+      if(a){const m=a.m;td.colSpan=m.c2-m.c1+1;td.rowSpan=m.r2-m.r1+1;
+        b={top:bOf(cell).top,left:bOf(cell).left,right:bOf(cellAt(m.c2,m.r1)).right,bottom:bOf(cellAt(m.c1,m.r2)).bottom};}
+      else b=bOf(cell);
+      const s=td.style;
+      s.borderTop=bcss(b.top);s.borderLeft=bcss(b.left);s.borderRight=bcss(b.right);s.borderBottom=bcss(b.bottom);
+      const bg=M.fills[xf.fill];if(bg)s.background=bg;
+      s.fontSize=Math.max(6,font.sz*96/72)+'px';if(font.b)s.fontWeight='700';if(font.i)s.fontStyle='italic';if(font.color)s.color=font.color;
+      const ent=byAnchor.get(ref);
+      const isNum=(cell&&(cell.num!==null||cell.f))||(ent&&ent.f.kind==='num');
+      let h2=xf.h;if(h2==='centerContinuous')h2='center';if(!h2||h2==='general'||h2==='fill'||h2==='justify'||h2==='distributed')h2=isNum&&!(cell&&cell.text)?'right':'left';
+      s.textAlign=h2;
+      s.verticalAlign=({top:'top',center:'middle',distributed:'middle',justify:'middle'}[xf.v])||'bottom';
+      if(xf.indent&&h2==='left')s.paddingLeft=(xf.indent*9+2)+'px';
+      if(xf.rot==='255'){s.writingMode='vertical-rl';s.textOrientation='upright';td.classList.add('vt');}
+      td.classList.add(xf.wrap?'wr':'nw');
+      const addSpan=(cls,text)=>{const sp=document.createElement('span');sp.className=cls;if(text!==undefined)sp.textContent=text;td.appendChild(sp);return sp;};
+      if(ent){
+        const f=ent.f;
+        if(f.prefix){const p=addSpan('pre',f.prefix.replace(/[　\s]+$/,''));p.title='先頭に自動で付きます';}
+        const inp=ent.inp;inp.classList.add('sin');inp.style.textAlign=h2;td.appendChild(inp);
+        if(f.kind!=='num'){ // 隣が空いていれば入力欄を広げる(Excelの文字のあふれと同じ)
+          const c2=a?a.m.c2:c;let own=0;for(let k=c;k<=c2;k++)own+=px(M.colW[k]||M.defW);
+          const free=(k)=>{const rf=colLetterS(k)+r,o2=M.cells.get(rf);return !((o2&&(o2.text||o2.num!==null||o2.f))||byAnchor.has(rf));};
+          let exR=0,exL=0;
+          if(h2!=='right')for(let k=c2+1;k<=M.maxC&&free(k);k++)exR+=px(M.colW[k]||M.defW);
+          if(h2!=='left')for(let k=c-1;k>=1&&free(k);k--)exL+=px(M.colW[k]||M.defW);
+          inp.style.width=(own+exL+exR-2)+'px';if(exL)inp.style.left=(-exL)+'px';
+        }
+        td.dataset.field='1';td.classList.add('fld');
+        if(!ent.found)td.classList.add('warn');
+        ent.td=td;ent.placed=true;
+      }else if(cell&&cell.f&&/^\s*TODAY\(\)\s*$/i.test(cell.f)){
+        const sp=addSpan('edt');sp.contentEditable='true';sp.spellcheck=false;
+        sp.textContent=fmtValue(M,xf,todaySerial());SH.texts[ref]=sp.textContent;SH.entries.set(ref,{kind:'text',orig:sp.textContent,el:sp});
+      }else if(cell&&cell.f){
+        const sp=addSpan('calc');sp.dataset.f=cell.f;SH.entries.set(ref,{kind:'calc',el:sp,cell,xf});
+      }else if(cell&&cell.text){
+        const sp=addSpan('edt');sp.contentEditable='true';sp.spellcheck=false;sp.textContent=cell.text;
+        SH.entries.set(ref,{kind:'text',orig:cell.text,el:sp});
+      }else if(cell&&cell.num!==null){
+        const inp=document.createElement('input');inp.type='text';inp.className='sin cst';inp.style.textAlign=h2;inp.value=fmtValue(M,xf,cell.num);
+        td.appendChild(inp);SH.entries.set(ref,{kind:'num',orig:cell.num,el:inp,xf});
+      }
+      if(SH.ovl.has(ref)){const o=addSpan('ovl');o.style.textAlign=h2;}
+      tr.appendChild(td);
+    }
+    tb.appendChild(tr);
+  }
+  SH.height=th;
+  tbl.appendChild(tb);
+  wrap.textContent='';wrap.appendChild(tbl);wrap.hidden=false;
+  // 置けた項目は従来の一覧から外す(置けなかった項目だけ一覧に残る)
+  const form=$('form');
+  for(const e of state.rows){ if(e.placed&&e.row&&e.row.parentNode) e.row.remove(); }
+  [...form.querySelectorAll('h3')].forEach(h=>{const n=h.nextElementSibling;if(!n||n.tagName==='H3')h.remove();});
+  const rest=form.querySelector('.row');
+  $('formRestHead').hidden=!rest;
+  fitSheet();refreshSheet();
+}
+function fitSheet(){
+  const wrap=$('sheetWrap');if(!wrap||wrap.hidden||!SH.tbl) return;
+  const avail=wrap.clientWidth||SH.width;
+  const z=Math.max(0.62,Math.min(1,avail/SH.width));
+  SH.tbl.style.zoom=z;SH.zoom=z;
+}
+window.addEventListener('resize',()=>{if(SH.printZoom===null)fitSheet();});
+
+/* ---- 値の更新(合計・自動計算) ---- */
+function overlayMap(){
+  const m=new Map();
+  if(!state.rows) return m;
+  try{
+    if($('payWrite').checked&&lastPlan) for(const e of planEntries()) m.set(e.cell,e.value);
+    if($('payApply').checked){const a=applyValues();if(a&&!a.error)for(const [k,v] of Object.entries(a.cells))m.set(k,v);}
+  }catch(e){}
+  return m;
+}
+function refreshSheet(){
+  if(!SH.tbl||!state.rows||!SH.M) return;
+  const M=SH.M, ov=overlayMap(), memo=new Map(), busy=new Set();
+  const fieldNum=new Map();
+  for(const e of state.rows){const t=Core.parseNum(String(e.inp.value).trim());fieldNum.set(e.f.cell,t===null?0:Number(t));}
+  const getNum=(ref)=>{
+    if(ov.has(ref)) return Number(ov.get(ref))||0;
+    if(fieldNum.has(ref)) return fieldNum.get(ref);
+    if(memo.has(ref)) return memo.get(ref);
+    const cell=M.cells.get(ref);let v=0;
+    if(cell){
+      if(cell.f&&!/^\s*TODAY\(\)\s*$/i.test(cell.f)){
+        if(busy.has(ref)) return 0;
+        busy.add(ref);
+        try{v=evalFormula(cell.f,getNum);if(!isFinite(v))v=cell.num||0;}catch(e){v=cell.num||0;}
+        busy.delete(ref);
+      }else if(SH.nums[ref]!==undefined) v=SH.nums[ref];
+      else if(cell.num!==null) v=cell.num;
+    }
+    memo.set(ref,v);return v;
+  };
+  for(const [ref,e] of SH.entries){
+    if(e.kind==='calc'){e.el.textContent=fmtValue(M,e.xf,getNum(ref));}
+  }
+  for(const [ref,td] of SH.tds){
+    const o=td.querySelector(':scope>.ovl');
+    if(!o) continue;
+    if(ov.has(ref)){const v=Number(ov.get(ref));o.textContent=isFinite(v)?(Math.round(v)+0).toLocaleString('ja-JP'):'';td.classList.add('ov');}
+    else td.classList.remove('ov');
+  }
+}
+/* 様式に最初から書いてある文字・数値を書き換えた分だけ、Excelに書き込む */
+function sheetEntries(){
+  const out=[];
+  for(const [ref,e] of SH.entries){
+    if(e.kind==='text'){const t=e.el.textContent;if(t!==e.orig)out.push({cell:ref,value:t});}
+    else if(e.kind==='num'){if(SH.nums[ref]!==undefined&&SH.nums[ref]!==e.orig)out.push({cell:ref,value:SH.nums[ref]});}
+  }
+  return out;
+}
+/* 画面のイベント */
+{
+  const wrap=$('sheetWrap');
+  wrap.addEventListener('input',(e)=>{
+    const t=e.target;
+    if(t.classList&&t.classList.contains('sin')){const td=t.closest('td');if(td)td.classList.remove('warn');}
+    recalcPay();
+  });
+  wrap.addEventListener('change',(e)=>{
+    const t=e.target;
+    if(t.classList&&t.classList.contains('cst')){
+      const td=t.closest('td'),en=SH.entries.get(td.dataset.ref);if(!en)return;
+      const raw=t.value.normalize('NFKC').replace(/[,%\s]/g,'');let n=Number(raw);
+      if(raw===''||isNaN(n)){delete SH.nums[td.dataset.ref];n=en.orig;}
+      else{if(/%/.test(fmtCode(SH.M,en.xf.numFmt)))n=n/100;SH.nums[td.dataset.ref]=n;}
+      t.value=fmtValue(SH.M,en.xf,n);recalcPay();
+    }
+  });
+  wrap.addEventListener('keydown',(e)=>{if(e.key==='Enter'&&e.target.isContentEditable){e.preventDefault();e.target.blur();}});
+  wrap.addEventListener('paste',(e)=>{if(e.target.isContentEditable){e.preventDefault();const t=(e.clipboardData||window.clipboardData).getData('text').replace(/[\r\n]+/g,' ');document.execCommand('insertText',false,t);}});
+  wrap.addEventListener('focusin',(e)=>{
+    const td=e.target.closest&&e.target.closest('td');const p=$('srcPanel');
+    if(!td||!td.dataset.field){p.hidden=true;return;}
+    const en=state.rows&&state.rows.find(x=>x.td===td);if(!en){p.hidden=true;return;}
+    p.textContent='';
+    const l=document.createElement('div');l.className='sname';l.textContent=en.f.name+'('+en.f.cell+')'+(en.found?'':'  ※PDFから読み取れませんでした');p.appendChild(l);
+    if(en.img){const im=document.createElement('img');im.src=en.img;im.className='thumb';p.appendChild(im);}
+    p.hidden=false;
+  });
+}
+/* 印刷:様式の見た目のまま、A4 1枚に収めて出す */
+function printInvoice(){
+  if(!SH.tbl) return;
+  document.body.classList.add('print-inv');
+  const zw=718/SH.width, zh=1040/SH.height;
+  SH.printZoom=Math.min(1.5,zw,zh);SH.tbl.style.zoom=SH.printZoom;
+  const done=()=>{document.body.classList.remove('print-inv');SH.printZoom=null;fitSheet();window.removeEventListener('afterprint',done);};
+  window.addEventListener('afterprint',done);
+  setTimeout(()=>window.print(),50);
+}
+$('btnPrintInv').addEventListener('click',printInvoice);
 
 loadTemplate();
 /* 前に画像PDF(見積書)を読んだ端末では、開いた時点でOCRの部品を準備しておく(PDFを選んでからの待ち時間を減らす) */
