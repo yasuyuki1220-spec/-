@@ -66,11 +66,11 @@ td.c input{width:62px}
 .perr{color:#b00020;font-weight:700}
 #printHead{display:none}
 #sheetWrap{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:6px;padding:6px;margin:8px 0}
-#sheet{min-width:0;border-collapse:collapse;table-layout:fixed;background:#fff;color:#000;font-family:"MS PGothic","Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif;line-height:1.25}
+#sheet{min-width:0;border-collapse:collapse;table-layout:fixed;background:#fff;color:#000;font-family:"MS PGothic","Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif;line-height:1.1}
 #sheet td{padding:0 2px;overflow:visible;position:relative;height:inherit}
 #sheet td.nw{white-space:pre}#sheet td.wr{white-space:pre-wrap;overflow:hidden}
 #sheet td.vt{padding:2px 0;letter-spacing:.1em}
-#sheet input.sin{font:inherit;color:inherit;background:#f1f7ff;border:0;border-bottom:1px solid #9bb8d8;border-radius:0;padding:0 2px;margin:0;width:100%;height:100%;min-height:1.3em;position:absolute;left:0;top:0;box-sizing:border-box;outline:0}
+#sheet input.sin{font:inherit;color:inherit;background:#f1f7ff;border:0;border-bottom:1px solid #9bb8d8;border-radius:0;padding:0 2px;margin:0;width:100%;height:100%;line-height:1.1;position:absolute;left:0;top:0;box-sizing:border-box;outline:0}
 #sheet td.warn input.sin{background:var(--warn);border-bottom-color:var(--warnb)}
 #sheet input.sin:focus{background:#fff;box-shadow:inset 0 0 0 2px #2d7ff9}
 #sheet input.cst{background:transparent;border-bottom:1px dotted #9bb8d8}
@@ -142,7 +142,7 @@ body.print-inv #sheet .ovl{color:#000}
         <option value="n">割賦(回数を決める)</option>
         <option value="m">割賦(月々の金額を決める)</option>
         <option value="b">割賦(ボーナス併用・年2回)</option></select></div>
-      <div><label>頭金(今回お客様がお支払いする現金)円</label><input id="payDown" type="text" inputmode="numeric" value="0"></div>
+      <div><label id="payDownLbl">頭金(今回お客様がお支払いする現金)円</label><input id="payDown" type="text" inputmode="numeric" value="0"></div>
       <div><label>金融機関(選ぶと登録済みの年利・回数が入ります)</label><select id="payFin"></select></div>
       <div class="pl"><label>年利(%)</label><input id="payRate" type="text" inputmode="decimal" value="0"></div>
       <div class="pl"><label><input id="payFees" type="checkbox"> 頭金に諸費用を含める<span id="payFeesAmt" class="hint"></span></label></div>
@@ -1089,7 +1089,7 @@ function renderForm(out,fields){
   });
   $('dump').textContent=out.raw?((out.errs&&out.errs.length?'【OCRのエラー】\n'+[...new Set(out.errs)].join('\n')+'\n\n':'')+'【OCRが返した文字】\n'+out.raw.join('\n')):(out.lines||[]).map(l=>'p'+(l.page+1)+' y'+l.top+'  '+l.text).join('\n');
   $('result').hidden=false;
-  { $('payDown').dataset.touched=''; const d15=cellVal('D15'); if(d15>0){ $('payDown').value=fmtNum(String(Math.max(0,d15-(cellVal('I16')-cellVal('E28'))))); } }
+  { $('payFees').checked=false;$('payDown').dataset.touched=''; const d15=cellVal('D15'); if(d15>0){ $('payDown').value=fmtNum(String(Math.max(0,d15-(cellVal('I16')-cellVal('E28'))))); } }
   recalcPay();
   placeSheet();
 }
@@ -1134,7 +1134,8 @@ function recalcPay(){
   payVisibility();
   const total=cellVal('D13')-cellVal('H15');
   const trade=cellVal('I16'), zan=cellVal('E28');
-  $('payFeesAmt').textContent=$('payFees').checked?'(諸費用 '+yen(feesTotal())+' + 入力した頭金 '+yen(numOf('payDown'))+' = '+yen(downEff())+')':'';
+  $('payFeesAmt').textContent=$('payFees').checked?'(頭金 '+yen(numOf('payDown'))+' + 諸費用 '+yen(feesTotal())+' = '+yen(downEff())+')':'';
+  $('payDownLbl').textContent=$('payFees').checked?'頭金(諸費用を除いた現金)円':'頭金(今回お客様がお支払いする現金)円';
   const planArgs={total,trade:trade-zan,down:downEff(),round100:$('payRound').checked,mode:$('payMode').value,rate:numOf('payRate'),
     n:numOf('payN'),monthly:numOf('payMonthly'),bonus:numOf('payBonus'),bonusMonths:[numOf('payB1'),numOf('payB2')],start:numOf('payStart')};
   const plan=Core.calcPlan(planArgs);
@@ -1187,7 +1188,13 @@ function recalcPay(){
   renderChecks();
 }
 $('payDown').addEventListener('input',()=>{$('payDown').dataset.touched='1';});
-['payMode','payDown','payFees','payRound','payRate','payN','payMonthly','payBonus','payB1','payB2','payStart'].forEach(id=>{
+/* 「頭金に諸費用を含める」: お客様が出す現金の合計は変えず、頭金(入力欄)と諸費用に分けて見せる(例: 500,000円 → 頭金288,530円+諸費用211,470円) */
+$('payFees').addEventListener('change',()=>{
+  const f=feesTotal(),cur=numOf('payDown');
+  $('payDown').value=fmtNum(String(Math.max(0,$('payFees').checked?cur-f:cur+f)));
+  $('payDown').dataset.touched='1';recalcPay();
+});
+['payMode','payDown','payRound','payRate','payN','payMonthly','payBonus','payB1','payB2','payStart'].forEach(id=>{
   $(id).addEventListener('input',()=>{recalcPay(); if(id==='payRate') lsSet('inv_rate_v1',$('payRate').value);});
 });
 $('form').addEventListener('input',recalcPay);
