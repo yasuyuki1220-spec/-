@@ -723,7 +723,7 @@ async function getPdfjs(){
 async function readPdf(file){
   const lib=await getPdfjs();
   const buf=new Uint8Array(await file.arrayBuffer());
-  const doc=await lib.getDocument({data:buf,wasmUrl:'https://pdfjs.invalid/wasm/'}).promise;
+  const doc=await lib.getDocument({data:buf,wasmUrl:'https://pdfjs.invalid/wasm/',useWorkerFetch:true}).promise;
   const pages=[];
   for(let i=1;i<=doc.numPages;i++){
     const p=await doc.getPage(i);
