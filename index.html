@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
 <title>請求書PDF取込ツール</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f4e79">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="請求書取込">
 <style>
 :root{--c:#1f4e79;--bg:#f3f5f8;--w:#fff;--line:#d5dbe3;--warn:#fff4d6;--warnb:#e0a800}
 *{box-sizing:border-box}
@@ -1103,6 +1110,12 @@ $('fDefault').addEventListener('click',()=>{if(!confirm('項目設定を初期�
 
 loadTemplate();
 })();
+</script>
+<script>
+/* Webアプリ化:アプリ本体を端末に保存して、次回から速く・オフラインでも開けるようにする */
+if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+  window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{});});
+}
 </script>
 </body>
 </html>
