@@ -167,7 +167,7 @@ body.print-inv #sheet .ovl{color:#000}
 
 <dialog id="dlg">
   <h2>読み取り項目の設定</h2>
-  <div class="hint">「探す文字」の右側にある文字・数字を読み取ります(全角半角・空白は無視)。書き込み先は Excel のセル番号です。変更は「保存」で様式に保存されます。</div>
+  <div class="hint">「探す文字」の右側にある文字・数字を読み取ります(全角半角・空白は無視)。同じ意味の別の言い方があるときは「|」で区切って並べます(例: 車両本体価格|車両価格|店頭価格。左にある言い方を先に探します)。書き込み先は Excel のセル番号です。変更は「保存」で様式に保存されます。</div>
   <div class="tw"><table><thead><tr><th>使う</th><th>項目名</th><th>セル</th><th>種類</th><th>探す文字</th><th>左右</th><th>何番目の同名</th><th>右の何番目の数値</th><th></th></tr></thead><tbody id="fbody"></tbody></table></div>
   <div style="margin-top:8px">
     <button id="fAdd">項目を追加</button>
@@ -238,13 +238,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     F('お買い上げ車両', '登録NO', 'H26', 'text', '登録NO', 'R'),
     F('お買い上げ車両', '購入形態', 'H27', 'text', '購入形態', 'R'),
 
-    F('販売価格', '車両本体価格', 'E22', 'num', '車両本体価格', 'L'),
+    F('販売価格', '車両本体価格', 'E22', 'num', '車両本体価格|車両価格|店頭価格', 'L'),
     F('販売価格', 'メーカーオプション価格', 'E24', 'num', 'メーカーオプション価格', 'L'),
     F('販売価格', '付属品価格', 'E25', 'num', '付属品価格', 'L'),
     F('販売価格', '割賦手数料', 'E27', 'num', '割賦手数料', 'L'),
     F('販売価格', '下取車残債', 'E28', 'num', '下取車残債', 'L'),
 
-    F('税金・保険料', '自動車税種別割', 'E30', 'num', '自動車税種別割', 'L'),
+    F('税金・保険料', '自動車税種別割', 'E30', 'num', '自動車税種別割|自動車税', 'L'),
     F('税金・保険料', '自動車税環境性能割', 'E31', 'num', '自動車税環境性能割', 'L'),
     F('税金・保険料', '自動車重量税', 'E32', 'num', '自動車重量税', 'L'),
     F('税金・保険料', '自賠責保険料', 'E33', 'num', '自賠責保険料', 'L'),
@@ -448,13 +448,23 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           }
         } else {
           // num / text : ラベルの右側から拾う
-          const cands = [];
-          for (const l of lines) {
-            for (const m of findLabels(l, f.label)) {
-              if (f.side === 'L' && m.startX >= pw(l) * 0.5) continue;
-              if (f.side === 'R' && m.startX < pw(l) * 0.5) continue;
-              cands.push(m);
+          // 「|」で区切った別名も探す(例: 自動車税種別割|自動車税)。前にある別名を優先
+          const aliasesOf = (lb) => String(lb || '').split(/[|｜]/).map((x) => x.trim()).filter(Boolean);
+          const others = fields.filter((x) => x !== f && x.enabled !== false && x.kind !== 'regex').flatMap((x) => aliasesOf(x.label)).map(normLabel);
+          let cands = [];
+          for (const al of aliasesOf(f.label)) {
+            const nal = normLabel(al);
+            for (const l of lines) {
+              for (const m of findLabels(l, al)) {
+                if (f.side === 'L' && m.startX >= pw(l) * 0.5) continue;
+                if (f.side === 'R' && m.startX < pw(l) * 0.5) continue;
+                // 「自動車税」が「自動車税環境性能割」の一部に当たってしまう場合は除く
+                const after = normLabel(valueItemsAfter(m, {}).map((i) => i.str).join('')).slice(0, 20);
+                if (others.some((o) => o.length > nal.length && o.startsWith(nal) && (nal + after).startsWith(o))) continue;
+                cands.push(m);
+              }
             }
+            if (cands.length) break;
           }
           const m = cands[Number(f.occ) || 0];
           if (m) {
@@ -703,6 +713,10 @@ function loadTemplate(){
   state.fields=null;
   try{const j=lsGet(LS_F); if(j) state.fields=JSON.parse(j);}catch(e){}
   if(!Array.isArray(state.fields)) state.fields=JSON.parse(JSON.stringify(Core.DEFAULT_FIELDS));
+  else{ // 以前に保存した設定にも、同じ意味の言い方を足す
+    const alias={'自動車税種別割':'自動車税種別割|自動車税','車両本体価格':'車両本体価格|車両価格|店頭価格'};
+    state.fields.forEach(f=>{if(alias[f.label]) f.label=alias[f.label];});
+  }
   const t=lsGet(LS_T);
   if(t){ try{const o=JSON.parse(t); state.tplBytes=b64ToBytes(o.b64); state.tplName=o.name||'登録した様式';}catch(e){state.tplBytes=null;} }
   if(!state.tplBytes){ state.tplBytes=b64ToBytes($('tpl-b64').textContent); state.tplName=DEFAULT_TPL_NAME; }
@@ -723,7 +737,7 @@ async function getPdfjs(){
 async function readPdf(file){
   const lib=await getPdfjs();
   const buf=new Uint8Array(await file.arrayBuffer());
-  const doc=await lib.getDocument({data:buf,wasmUrl:'https://pdfjs.invalid/wasm/'}).promise;
+  const doc=await lib.getDocument({data:buf,wasmUrl:'https://pdfjs.invalid/wasm/',useWorkerFetch:true}).promise;
   const pages=[];
   for(let i=1;i<=doc.numPages;i++){
     const p=await doc.getPage(i);
