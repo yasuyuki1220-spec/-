@@ -145,7 +145,7 @@ body.print-inv #sheet .ovl{color:#000}
       <div><label id="payDownLbl">頭金(今回お客様がお支払いする現金)円</label><input id="payDown" type="text" inputmode="numeric" value="0"></div>
       <div><label>金融機関(選ぶと登録済みの年利・回数が入ります)</label><select id="payFin"></select></div>
       <div class="pl"><label>年利(%)</label><input id="payRate" type="text" inputmode="decimal" value="0"></div>
-      <div class="pl"><label><input id="payFees" type="checkbox"> 頭金に諸費用を含める<span id="payFeesAmt" class="hint"></span></label></div>
+      <div class="pl"><label><input id="payFees" type="checkbox"> 諸費用を現金で払う(頭金に加算して、割賦元金から引く)<span id="payFeesAmt" class="hint"></span></label></div>
       <div id="payRoundBox"><label><input id="payRound" type="checkbox" checked> 信販会社方式(毎月は100円単位、端数は初回に)</label></div>
       <div class="pn"><label>お支払回数(ヶ月)</label><input id="payN" type="text" inputmode="numeric" value="60"></div>
       <div class="pm"><label>月々のお支払額 円</label><input id="payMonthly" type="text" inputmode="numeric" value="50000"></div>
@@ -1134,7 +1134,7 @@ function recalcPay(){
   payVisibility();
   const total=cellVal('D13')-cellVal('H15');
   const trade=cellVal('I16'), zan=cellVal('E28');
-  $('payFeesAmt').textContent=$('payFees').checked?'(諸費用 '+yen(feesTotal())+' + 入力した頭金 '+yen(numOf('payDown'))+' = '+yen(downEff())+')':'';
+  $('payFeesAmt').textContent=$('payFees').checked?'(入力した頭金 '+yen(numOf('payDown'))+' + 諸費用 '+yen(feesTotal())+' = 現金でのお支払い '+yen(downEff())+')':'';
   const planArgs={total,trade:trade-zan,down:downEff(),round100:$('payRound').checked,mode:$('payMode').value,rate:numOf('payRate'),
     n:numOf('payN'),monthly:numOf('payMonthly'),bonus:numOf('payBonus'),bonusMonths:[numOf('payB1'),numOf('payB2')],start:numOf('payStart')};
   const plan=Core.calcPlan(planArgs);
