@@ -655,7 +655,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 'use strict';
 const Core = window.InvoiceCore;
 const $ = (id)=>document.getElementById(id);
-const LS_F='inv_fields_v1', LS_T='inv_tpl_v1';
+const LS_F='inv_fields_v1', LS_T='inv_tpl_v1', LS_OCR='inv_ocr_v1';
 const b64ToBytes=(b)=>{const s=atob(b.replace(/\s/g,''));const u=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u[i]=s.charCodeAt(i);return u;};
 const bytesToB64=(u)=>{let s='';const C=0x8000;for(let i=0;i<u.length;i+=C)s+=String.fromCharCode.apply(null,u.subarray(i,i+C));return btoa(s);};
 const lsGet=(k)=>{try{return localStorage.getItem(k);}catch(e){return null;}};
@@ -716,11 +716,7 @@ function loadTess(){
 }
 async function createOcrWorker(kind){
   await loadTess();
-  if(kind==='jpn'){
-    try{ return await window.Tesseract.createWorker('jpn',1,{langPath:'https://cdn.jsdelivr.net/npm/@tesseract.js-data/jpn/4.0.0_fast'}); }
-    catch(e){ return await window.Tesseract.createWorker('jpn'); }
-  }
-  return await window.Tesseract.createWorker('eng');
+  return await window.Tesseract.createWorker(kind==='jpn'?'jpn':'eng');
 }
 /* 読み取りを速くするため、数字・英字用のOCRを複数同時に動かす(端末の性能に合わせて2〜3個)。結果は1個のときと同じ */
 function ocrParallel(){
@@ -839,26 +835,33 @@ function calibrateDy(reg,ys){
 const thumbOf=(c)=>{try{return c.toDataURL('image/png');}catch(e){return null;}};
 async function scanQuote(doc,progress){
   const say=progress||(()=>{});
-  const tot=4+Core.QUOTE_ROWS.length+Core.QUOTE_TEXT.length;
-  let done=0;
+  // 進み具合の配分:画像の準備4+OCR部品の準備6+各枠1(日本語は時間がかかるので1枠3)
+  const JW=3, nOcr=Core.QUOTE_ROWS.length+Core.QUOTE_TEXT.length;
+  const nJpn=Core.QUOTE_TEXT.filter(t=>t.mode==='jpn'&&!t.manual).length;
+  const tot=4+6+(nOcr-nJpn)+nJpn*JW;
+  let done=0, cnt=0, restOther=nOcr-nJpn;
+  const msg=()=>cnt===0?'文字読み取りの準備中…':((restOther>0?'金額・文字を読み取り中… (':'お名前・車名など日本語を読み取り中… (')+cnt+'/'+nOcr+')');
   const pct=()=>Math.min(100,Math.round(done/tot*100));
   const tick=()=>new Promise(r=>setTimeout(r,0)); // 画面の表示を更新させる
   say('見積書の画像を読み込み中…',0);
-  if(!window.__ocrHook) warmOcr();
+  if(window.__ocrHook) done+=6;
+  else{
+    warmOcr();
+    for(const k of ['eng','jpn']){ const ok=()=>{done+=3;say(msg(),pct());}; slotWorker(slotsOf(k)[0],k).then(ok,ok); }
+  }
   const page=await doc.getPage(1);
   const SC=8;
   const regs=[];
   for(const b of [[0.20,0.205,0.50,0.51],[0.20,0.515,0.50,0.955],[0.0,0.09,1.0,0.20],[0.66,0.205,0.99,0.265]]){
     regs.push(await renderRegion(page,b[0],b[1],b[2],b[3],SC));
-    done++;say('見積書の画像を読み込み中…',pct());await tick();
+    done++;say(cnt?msg():'見積書の画像を読み込み中…',pct());await tick();
   }
   const [A,B,Hd,T]=regs;
   const rowsA=Core.QUOTE_ROWS.filter(r=>r.y<0.51&&r.key!=='total'), rowsB=Core.QUOTE_ROWS.filter(r=>r.y>=0.51);
   const dyA=calibrateDy(A,rowsA.map(r=>r.y)), dyB=calibrateDy(B,rowsB.map(r=>r.y));
   const vals={}, results={}, fields=[];
   const put=(f,val,found,img)=>{fields.push(f);results[f.cell+'|'+f.name]={value:val,found,img};};
-  const nOcr=tot-4;
-  const track=(p)=>{const q=p.then((t)=>{done++;say('金額・文字を読み取り中… ('+(done-4)+'/'+nOcr+')',pct());return t;});q.catch(()=>{});return q;};
+  const track=(p,jpn)=>{const q=p.then((t)=>{cnt++;if(jpn)done+=JW;else{done++;restOther--;}say(msg(),pct());return t;});q.catch(()=>{});return q;};
   // 枠を切り出したそばからOCRに回す(複数同時に進む)
   const rowJobs=[];
   for(const row of Core.QUOTE_ROWS){
@@ -879,7 +882,7 @@ async function scanQuote(doc,progress){
     if(tf.manual) p=Promise.resolve('');
     else if(mode==='jpn'){ p=jpnChain.then(()=>noJpn.v?'':ocrCanvas(c,'jpn').catch(()=>{noJpn.v=true;return '';})); jpnChain=p; }
     else p=ocrCanvas(c,mode);
-    textJobs.push({tf,c,p:track(p)});
+    textJobs.push({tf,c,p:track(p,mode==='jpn'&&!tf.manual)});
     await tick();
   }
   const rowT=await Promise.all(rowJobs.map(j=>j.p));
@@ -935,6 +938,7 @@ $('pdfFile').addEventListener('change',async(e)=>{
       setStatus('文字データのない画像のPDFです。見積書として、画像から文字を読み取ります(OCR)…');
       const out=await scanQuote(doc,(m,p)=>{setStatus(m);if(p!==undefined)setProgress(p);});
       setProgress(100);progTimer=setTimeout(()=>setProgress(null),1200);
+      lsSet(LS_OCR,'1');
       renderForm(out,out.fields);
       const miss=state.rows.filter(r=>!r.found).length, ng=out.checks.filter(c=>!c.ok).length;
       setStatus('見積書を読み取りました。'+(ng?'検算が合わない箇所が'+ng+'件あります。元の見積書と見比べてください。':'検算はすべて一致しました。')+(out.noJpn?'日本語OCRの部品を読み込めなかったため、名前などは画像を見て入力してください。':'お客様名・担当者・車名など文字の欄は、必ず画像と見比べて確認してください。'));
@@ -1184,6 +1188,8 @@ $('fSave').addEventListener('click',()=>{
 $('fDefault').addEventListener('click',()=>{if(!confirm('項目設定を初期設定に戻します。よろしいですか?'))return;draft=JSON.parse(JSON.stringify(Core.DEFAULT_FIELDS));renderSettings();});
 
 loadTemplate();
+/* 前に画像PDF(見積書)を読んだ端末では、開いた時点でOCRの部品を準備しておく(PDFを選んでからの待ち時間を減らす) */
+if(lsGet(LS_OCR)&&!window.__ocrHook) setTimeout(()=>{try{warmOcr();}catch(e){}},1500);
 })();
 </script>
 <script>
