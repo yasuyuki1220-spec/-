@@ -78,6 +78,7 @@ td.c input{width:62px}
 #sheet .edt:hover{background:#eef6ff}#sheet .edt:focus{background:#fff;box-shadow:0 0 0 2px #2d7ff9}
 #sheet .pre{position:relative;z-index:1;pointer-events:none;margin-right:2px}
 #sheet td.fld:has(.pre){padding-left:0}
+#sheet td.fld{z-index:1}#sheet td.fld:focus-within{z-index:3}
 #sheet .ovl{display:none;color:#1f4e79}
 #sheet td.ov>.ovl{display:block;background:#f3f7fc}
 #sheet td.ov>input.sin,#sheet td.ov>.calc,#sheet td.ov>.edt{display:none}
@@ -168,6 +169,8 @@ body.print-inv #sheet .ovl{color:#000}
 <dialog id="dlg">
   <h2>読み取り項目の設定</h2>
   <div class="hint">「探す文字」の右側にある文字・数字を読み取ります(全角半角・空白は無視)。同じ意味の別の言い方があるときは「|」で区切って並べます(例: 車両本体価格|車両価格|店頭価格。左にある言い方を先に探します)。書き込み先は Excel のセル番号です。変更は「保存」で様式に保存されます。</div>
+  <div class="hint" style="margin:6px 0 2px">車名の読み替え用の言葉(1行に1つ)。スキャンした見積書の車名に、これに似た文字があれば、ここに書いた表記に直します(例: ﾊﾟｯｹｰｼﾞ)。</div>
+  <textarea id="vocab" rows="3" style="width:100%;font:inherit;border:1px solid #b9c2cf;border-radius:6px;padding:6px 8px"></textarea>
   <div class="tw"><table><thead><tr><th>使う</th><th>項目名</th><th>セル</th><th>種類</th><th>探す文字</th><th>左右</th><th>何番目の同名</th><th>右の何番目の数値</th><th></th></tr></thead><tbody id="fbody"></tbody></table></div>
   <div style="margin-top:8px">
     <button id="fAdd">項目を追加</button>
@@ -654,7 +657,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     { key: 'name', label: 'お客様名', cell: 'C7', group: 'お客様情報', box: [0.19, 0.098, 0.44, 0.128], mode: 'jpn', strip: /\s*[様樣欄]\s*$/ },
     { key: 'tantou', label: '担当者', cell: 'H9', group: 'お客様情報', box: [0.82, 0.110, 0.94, 0.128], mode: 'jpn', prefix: '担当　　' },
     { key: 'order', label: '注文NO', cell: 'H22', group: 'お買い上げ車両', box: [0.846, 0.1335, 0.906, 0.1425], mode: 'digits', manual: true, numeric: true, scale: 0.8, noLines: true },
-    { key: 'shamei', label: '車名', cell: 'H23', group: 'お買い上げ車両', box: [0.10, 0.142, 0.435, 0.157], mode: 'jpn' },
+    { key: 'shamei', label: '車名', cell: 'H23', group: 'お買い上げ車両', box: [0.10, 0.142, 0.435, 0.157], mode: 'jpn', kanaJoin: true },
     { key: 'katashiki', label: '型式', cell: 'H24', group: 'お買い上げ車両', box: [0.655, 0.1595, 0.815, 0.1745], mode: 'ascii' },
     { key: 'frame', label: '車体番号(型式の頭+フレームNO)', cell: 'H25', group: 'お買い上げ車両', box: [0.612, 0.179, 0.685, 0.1945], mode: 'digits', composeFrom: 'katashiki' },
   ];
@@ -880,6 +883,18 @@ function calibrateDy(reg,ys){
   }
   return best;
 }
+/* 車名の読み間違いを直す:OCRが入れてしまうカナ同士の空白を詰め、登録した言葉(ﾊﾟｯｹｰｼﾞなど)に似た文字はその表記に直す */
+const LS_V='inv_vocab_v1', DEFAULT_VOCAB=['ﾊﾟｯｹｰｼﾞ'];
+function getVocab(){const j=lsGet(LS_V);if(j!==null){try{const a=JSON.parse(j);if(Array.isArray(a))return a;}catch(e){}}return DEFAULT_VOCAB.slice();}
+function lev(a,b){const m=a.length,n=b.length;let p=Array.from({length:n+1},(_,j)=>j);for(let i=1;i<=m;i++){const c=[i];for(let j=1;j<=n;j++)c[j]=Math.min(p[j]+1,c[j-1]+1,p[j-1]+(a[i-1]===b[j-1]?0:1));p=c;}return p[n];}
+function fixCarName(t){
+  t=t.replace(/([゠-ヿｦ-ﾟ])\s+(?=[゠-ヿｦ-ﾟ])/g,'$1').replace(/(\d)\s+(?=年)/g,'$1');
+  const V=getVocab().map(v=>({raw:v,n:String(v).normalize('NFKC')})).filter(v=>v.n.length>=3);
+  return t.replace(/[゠-ヿｦ-ﾟ]{3,}/g,(tok)=>{
+    const n=tok.normalize('NFKC');let best=null,bd=99;
+    for(const v of V){const d=lev(n,v.n);if(d<=Math.max(1,Math.round(v.n.length*0.4))&&n[0]===v.n[0]&&d<bd){best=v;bd=d;}}
+    return best?best.raw:tok;});
+}
 const thumbOf=(c)=>{try{return c.toDataURL('image/png');}catch(e){return null;}};
 async function scanQuote(doc,progress){
   const say=progress||(()=>{});
@@ -946,7 +961,7 @@ async function scanQuote(doc,progress){
     const mode=tf.mode;
     let found=false,val='';
     const t=String(textT[i]||'').replace(/[\r\n]+/g,' ').trim();
-    if(mode==='jpn'){ val=t.replace(/\s+/g,'　'); if(tf.strip) val=val.replace(tf.strip,'').trim(); }
+    if(mode==='jpn'){ val=(tf.kanaJoin?fixCarName(t):t).replace(/\s+/g,'　'); if(tf.strip) val=val.replace(tf.strip,'').trim(); }
     else if(mode==='digits'){ const m=t.replace(/[^0-9]/g,''); val=m; }
     else { val=t.replace(/[^A-Z0-9-]/g,'').replace(/^-+|-+$/g,''); }
     textVals[tf.key]=val;
@@ -1236,12 +1251,12 @@ function renderSettings(){
     tr.append(tdE,tN,tC,tK,tL,tS,tO,tX,tD);tb.appendChild(tr);
   });
 }
-$('btnSettings').addEventListener('click',()=>{draft=JSON.parse(JSON.stringify(state.fields));renderSettings();$('dlg').showModal();});
+$('btnSettings').addEventListener('click',()=>{draft=JSON.parse(JSON.stringify(state.fields));renderSettings();$('vocab').value=getVocab().join('\n');$('dlg').showModal();});
 $('fAdd').addEventListener('click',()=>{draft.push({group:'追加項目',name:'新しい項目',cell:'A1',kind:'num',label:'',side:'L',occ:0,n:0,enabled:true});renderSettings();$('fbody').parentElement.parentElement.scrollTop=1e6;});
 $('fCancel').addEventListener('click',()=>$('dlg').close());
 $('fSave').addEventListener('click',()=>{
   for(const f of draft){ if(f.enabled!==false&&!/^[A-Z]{1,3}[1-9]\d*$/.test(f.cell)){alert('セル番号が正しくありません:'+f.name+'('+f.cell+')');return;} }
-  if(!lsSet(LS_F,JSON.stringify(draft))){alert('保存できませんでした');return;}
+  if(!lsSet(LS_F,JSON.stringify(draft))||!lsSet(LS_V,JSON.stringify($('vocab').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean)))){alert('保存できませんでした');return;}
   loadTemplate();$('dlg').close();clearResult(false);
 });
 $('fDefault').addEventListener('click',()=>{if(!confirm('項目設定を初期設定に戻します。よろしいですか?'))return;draft=JSON.parse(JSON.stringify(Core.DEFAULT_FIELDS));renderSettings();});
